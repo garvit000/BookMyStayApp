@@ -1,12 +1,12 @@
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * BookMyStayApp
- * Combined Use Cases UC1 → UC11
+ * BookMyStayApp - Integrated System (UC1 → UC12)
  */
 
-public class BookMyStayApp {
+public class BookMyStayApp implements Serializable {
 
     /* ================= UC9: Custom Exception ================= */
     static class InvalidBookingException extends Exception {
@@ -15,8 +15,8 @@ public class BookMyStayApp {
         }
     }
 
-    /* ================= Room Modeling (UC2) ================= */
-    abstract static class Room {
+    /* ================= UC2: Room Hierarchy ================= */
+    abstract static class Room implements Serializable {
         String roomType;
         int price;
 
@@ -38,20 +38,21 @@ public class BookMyStayApp {
         SuiteRoom() { super("Suite Room", 7000); }
     }
 
-    /* ================= Shared State ================= */
+    /* ================= Shared System State ================= */
     static Map<String, Integer> inventory = new HashMap<>();
-    static Set<String> allocatedRoomIds = new HashSet<>();
-    static Map<String, String> roomToType = new HashMap<>();
+    static Set<String> allocatedRooms = new HashSet<>();
+    static Map<String, String> roomTypeMap = new HashMap<>();
     static Map<String, List<String>> addonServices = new HashMap<>();
     static List<String> bookingHistory = new ArrayList<>();
-    static Stack<String> releasedRoomsStack = new Stack<>();
+    static Stack<String> rollbackStack = new Stack<>();
 
     /* ================= UC11 Concurrency ================= */
     static Queue<BookingRequest> bookingQueue = new LinkedList<>();
     static final Object queueLock = new Object();
     static final Object inventoryLock = new Object();
 
-    static int counter = 1;
+    /* ================= UC12 Persistence ================= */
+    static final String FILE_NAME = "bookmystay_state.dat";
 
     /* ================= Booking Request ================= */
     static class BookingRequest {
@@ -66,6 +67,8 @@ public class BookMyStayApp {
         }
     }
 
+    static int counter = 1;
+
     /* ================= Initialization ================= */
     static {
         inventory.put("Single Room", 5);
@@ -75,15 +78,15 @@ public class BookMyStayApp {
 
     /* ================= Validation ================= */
     static class Validator {
-        static void validateRoomType(String type) throws InvalidBookingException {
+        static void validateRoom(String type) throws InvalidBookingException {
             if (!inventory.containsKey(type)) {
-                throw new InvalidBookingException("Invalid room type: " + type);
+                throw new InvalidBookingException("Invalid room type");
             }
         }
 
         static void validateAvailability(String type) throws InvalidBookingException {
             if (inventory.get(type) <= 0) {
-                throw new InvalidBookingException("No rooms available for: " + type);
+                throw new InvalidBookingException("No rooms available");
             }
         }
     }
@@ -93,90 +96,69 @@ public class BookMyStayApp {
         return type.substring(0, 2).toUpperCase() + "-" + (counter++);
     }
 
-    /* ================= Core Booking Logic ================= */
-    static synchronized String bookRoom(String type, List<String> services) throws InvalidBookingException {
+    /* ================= Booking Logic ================= */
+    static synchronized String bookRoom(String type, List<String> services)
+            throws InvalidBookingException {
 
-        Validator.validateRoomType(type);
+        Validator.validateRoom(type);
         Validator.validateAvailability(type);
 
         String roomId;
-
         do {
             roomId = generateRoomId(type);
-        } while (allocatedRoomIds.contains(roomId));
+        } while (allocatedRooms.contains(roomId));
 
-        allocatedRoomIds.add(roomId);
-        roomToType.put(roomId, type);
+        allocatedRooms.add(roomId);
+        roomTypeMap.put(roomId, type);
         addonServices.put(roomId, services);
 
         inventory.put(type, inventory.get(type) - 1);
 
         bookingHistory.add("BOOKED: " + roomId + " | " + type + " | " + services);
 
-        System.out.println("BOOKED: " + roomId + " (" + type + ")");
+        System.out.println("Booked: " + roomId);
         return roomId;
     }
 
     /* ================= Cancellation (UC10) ================= */
-    static synchronized void cancelBooking(String roomId) throws InvalidBookingException {
+    static synchronized void cancelBooking(String roomId)
+            throws InvalidBookingException {
 
-        if (!roomToType.containsKey(roomId)) {
-            throw new InvalidBookingException("Booking does not exist");
+        if (!roomTypeMap.containsKey(roomId)) {
+            throw new InvalidBookingException("Reservation not found");
         }
 
-        if (!allocatedRoomIds.contains(roomId)) {
-            throw new InvalidBookingException("Booking already cancelled");
+        if (!allocatedRooms.contains(roomId)) {
+            throw new InvalidBookingException("Already cancelled");
         }
 
-        String type = roomToType.get(roomId);
+        String type = roomTypeMap.get(roomId);
 
-        allocatedRoomIds.remove(roomId);
+        allocatedRooms.remove(roomId);
         inventory.put(type, inventory.get(type) + 1);
 
-        releasedRoomsStack.push(roomId);
+        rollbackStack.push(roomId);
 
-        bookingHistory.add("CANCELLED: " + roomId + " | " + type);
+        bookingHistory.add("CANCELLED: " + roomId);
 
-        System.out.println("CANCELLED: " + roomId);
+        System.out.println("Cancelled: " + roomId);
     }
 
-    /* ================= History ================= */
-    static void showHistory() {
-        System.out.println("\n--- Booking History ---");
-        for (String h : bookingHistory) {
-            System.out.println(h);
-        }
-        System.out.println("----------------------\n");
-    }
-
-    /* ================= Inventory ================= */
-    static void showInventory() {
-        System.out.println("\n--- Inventory ---");
-        for (Map.Entry<String, Integer> e : inventory.entrySet()) {
-            System.out.println(e.getKey() + " : " + e.getValue());
-        }
-        System.out.println("-----------------\n");
-    }
-
-    /* ================= Add Request (UC11 Queue) ================= */
-    static void addRequest(BookingRequest request) {
+    /* ================= Booking Queue (UC11) ================= */
+    static void addRequest(BookingRequest req) {
         synchronized (queueLock) {
-            bookingQueue.add(request);
+            bookingQueue.add(req);
         }
     }
 
-    /* ================= Process Requests ================= */
-    static void processRequests() {
+    static void processQueue() {
         while (true) {
-            BookingRequest req = null;
+            BookingRequest req;
 
             synchronized (queueLock) {
-                if (!bookingQueue.isEmpty()) {
-                    req = bookingQueue.poll();
-                }
+                if (bookingQueue.isEmpty()) break;
+                req = bookingQueue.poll();
             }
-
-            if (req == null) break;
 
             try {
                 bookRoom(req.roomType, req.services);
@@ -186,37 +168,88 @@ public class BookMyStayApp {
         }
     }
 
-    /* ================= Worker Thread ================= */
     static class Worker implements Runnable {
         public void run() {
-            processRequests();
+            processQueue();
         }
     }
 
-    /* ================= Main ================= */
-    public static void main(String[] args) throws Exception {
+    /* ================= Persistence (UC12) ================= */
+    static void saveState() {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(FILE_NAME))) {
+            oos.writeObject(inventory);
+            oos.writeObject(allocatedRooms);
+            oos.writeObject(roomTypeMap);
+            oos.writeObject(addonServices);
+            oos.writeObject(bookingHistory);
+            System.out.println("State saved.");
+        } catch (Exception e) {
+            System.out.println("Save error: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    static void loadState() {
+        File f = new File(FILE_NAME);
+        if (!f.exists()) {
+            System.out.println("No saved state found.");
+            return;
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(FILE_NAME))) {
+            inventory = (Map<String, Integer>) ois.readObject();
+            allocatedRooms = (Set<String>) ois.readObject();
+            roomTypeMap = (Map<String, String>) ois.readObject();
+            addonServices = (Map<String, List<String>>) ois.readObject();
+            bookingHistory = (List<String>) ois.readObject();
+
+            System.out.println("State restored.");
+        } catch (Exception e) {
+            System.out.println("Recovery failed. Starting fresh.");
+        }
+    }
+
+    /* ================= Display ================= */
+    static void showInventory() {
+        System.out.println("\nInventory:");
+        for (Map.Entry<String, Integer> e : inventory.entrySet()) {
+            System.out.println(e.getKey() + " -> " + e.getValue());
+        }
+    }
+
+    static void showHistory() {
+        System.out.println("\nHistory:");
+        for (String h : bookingHistory) {
+            System.out.println(h);
+        }
+    }
+
+    /* ================= MAIN ================= */
+    public static void main(String[] args) {
 
         Scanner sc = new Scanner(System.in);
 
-        System.out.println("Book My Stay App (UC1–UC11)\n");
+        // Load persisted data
+        loadState();
 
         while (true) {
-            System.out.println("1. Add Booking Request");
-            System.out.println("2. Process Concurrent Bookings");
-            System.out.println("3. Cancel Booking");
-            System.out.println("4. View History");
-            System.out.println("5. View Inventory");
-            System.out.println("6. Exit");
 
-            System.out.print("Choose: ");
+            System.out.println("\nBook My Stay App");
+            System.out.println("1. Add Booking Request");
+            System.out.println("2. Process Bookings (Concurrent)");
+            System.out.println("3. Cancel Booking");
+            System.out.println("4. View Inventory");
+            System.out.println("5. View History");
+            System.out.println("6. Save & Exit");
+
+            System.out.print("Choice: ");
             int choice = Integer.parseInt(sc.nextLine());
 
             try {
-
                 switch (choice) {
 
                     case 1:
-                        System.out.print("Guest Name: ");
+                        System.out.print("Guest: ");
                         String guest = sc.nextLine();
 
                         System.out.print("Room Type: ");
@@ -244,20 +277,21 @@ public class BookMyStayApp {
                         break;
 
                     case 3:
-                        System.out.print("Enter Room ID to cancel: ");
+                        System.out.print("Room ID: ");
                         String id = sc.nextLine();
                         cancelBooking(id);
                         break;
 
                     case 4:
-                        showHistory();
-                        break;
-
-                    case 5:
                         showInventory();
                         break;
 
+                    case 5:
+                        showHistory();
+                        break;
+
                     case 6:
+                        saveState();
                         System.out.println("Exiting...");
                         return;
 
@@ -265,11 +299,9 @@ public class BookMyStayApp {
                         System.out.println("Invalid choice");
                 }
 
-            } catch (InvalidBookingException e) {
+            } catch (Exception e) {
                 System.out.println("Error: " + e.getMessage());
             }
-
-            System.out.println("-----------------------------------");
         }
     }
 }
