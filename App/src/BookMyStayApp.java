@@ -1,12 +1,11 @@
+import java.util.HashMap;
+import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+
 /**
  * BookMyStay Application
- * Use Case: Room Modeling using Abstraction and Inheritance
- *
- * Demonstrates object modeling using an abstract Room class and
- * concrete implementations for different room types.
- *
- * @author Garvit
- * @version 1.0
+ * UC4: Room Search & Availability Check (Read-Only)
  */
 
 abstract class Room {
@@ -26,67 +25,110 @@ abstract class Room {
     public void displayRoomDetails() {
         System.out.println("Room Type: " + roomType);
         System.out.println("Beds: " + beds);
-        System.out.println("Room Size: " + size + " sq ft");
+        System.out.println("Size: " + size + " sq ft");
         System.out.println("Price per Night: ₹" + pricePerNight);
+    }
+
+    public String getRoomType() {
+        return roomType;
     }
 }
 
 /* Concrete Room Types */
 
 class SingleRoom extends Room {
-
     public SingleRoom() {
         super("Single Room", 1, 200, 2500);
     }
 }
 
 class DoubleRoom extends Room {
-
     public DoubleRoom() {
         super("Double Room", 2, 350, 4000);
     }
 }
 
 class SuiteRoom extends Room {
-
     public SuiteRoom() {
         super("Suite Room", 3, 600, 7000);
     }
 }
 
-public class BookMyStayApp {
+/* Inventory (State Holder ONLY) */
+
+class RoomInventory {
+
+    private HashMap<String, Integer> inventory;
+
+    public RoomInventory() {
+        inventory = new HashMap<>();
+
+        inventory.put("Single Room", 5);
+        inventory.put("Double Room", 3);
+        inventory.put("Suite Room", 0); // simulate unavailable
+    }
+
+    public int getAvailability(String roomType) {
+        return inventory.getOrDefault(roomType, 0);
+    }
+
+    public Map<String, Integer> getAllInventory() {
+        return inventory; // read-only usage expected
+    }
+}
+
+/* ✅ Search Service (READ-ONLY) */
+
+class RoomSearchService {
+
+    private RoomInventory inventory;
+
+    public RoomSearchService(RoomInventory inventory) {
+        this.inventory = inventory;
+    }
+
+    public void searchAvailableRooms(List<Room> rooms) {
+
+        System.out.println("\n--- Available Rooms ---");
+
+        for (Room room : rooms) {
+
+            int available = inventory.getAvailability(room.getRoomType());
+
+            // ✅ Filter unavailable rooms
+            if (available > 0) {
+                room.displayRoomDetails();
+                System.out.println("Available: " + available);
+                System.out.println("--------------------------");
+            }
+        }
+    }
+}
+
+/* Application Entry */
+
+public class UseCase4RoomSearch {
 
     public static void main(String[] args) {
 
         System.out.println("=================================");
         System.out.println("        Book My Stay App");
-        System.out.println("     Room Availability System");
-        System.out.println("=================================\n");
+        System.out.println("     Room Search System (UC4)");
+        System.out.println("=================================");
 
-        /* Creating room objects (Polymorphism) */
-        Room single = new SingleRoom();
-        Room doubleRoom = new DoubleRoom();
-        Room suite = new SuiteRoom();
+        // Room objects (Domain layer)
+        List<Room> rooms = new ArrayList<>();
+        rooms.add(new SingleRoom());
+        rooms.add(new DoubleRoom());
+        rooms.add(new SuiteRoom());
 
-        /* Static availability variables */
-        int singleRoomAvailable = 5;
-        int doubleRoomAvailable = 3;
-        int suiteRoomAvailable = 2;
+        // Inventory (State)
+        RoomInventory inventory = new RoomInventory();
 
-        System.out.println("---- Room Details ----\n");
+        // Search Service (Read-only)
+        RoomSearchService searchService = new RoomSearchService(inventory);
 
-        single.displayRoomDetails();
-        System.out.println("Available Rooms: " + singleRoomAvailable);
-        System.out.println("---------------------------");
-
-        doubleRoom.displayRoomDetails();
-        System.out.println("Available Rooms: " + doubleRoomAvailable);
-        System.out.println("---------------------------");
-
-        suite.displayRoomDetails();
-        System.out.println("Available Rooms: " + suiteRoomAvailable);
-        System.out.println("---------------------------");
-
-        System.out.println("\nApplication terminated.");
+        // Perform search
+        searchService.searchAvailableRooms(rooms);
     }
 }
