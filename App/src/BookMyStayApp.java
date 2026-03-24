@@ -1,7 +1,8 @@
 import java.util.*;
 
 /**
- * BookMyStayApp - Combined Use Cases (UC1 to UC9)
+ * Book My Stay App
+ * Combined Implementation (UC1 → UC10)
  */
 
 public class BookMyStayApp {
@@ -13,7 +14,7 @@ public class BookMyStayApp {
         }
     }
 
-    /* ================= UC2: Room Abstraction ================= */
+    /* ================= UC2: Room Modeling ================= */
     abstract static class Room {
         String roomType;
         int price;
@@ -38,26 +39,26 @@ public class BookMyStayApp {
 
     /* ================= Inventory ================= */
     static Map<String, Integer> inventory = new HashMap<>();
-    static Map<String, Set<String>> allocatedRooms = new HashMap<>();
 
-    /* ================= UC6: Room Allocation ================= */
-    static Set<String> usedRoomIds = new HashSet<>();
+    /* ================= Allocation ================= */
+    static Map<String, String> roomToType = new HashMap<>(); // roomId -> type
+    static Set<String> allocatedRoomIds = new HashSet<>();
 
-    /* ================= UC7: Add-On Services ================= */
+    /* ================= UC7: Add-ons ================= */
     static Map<String, List<String>> addonServices = new HashMap<>();
 
-    /* ================= UC8: Booking History ================= */
+    /* ================= UC8: History ================= */
     static List<String> bookingHistory = new ArrayList<>();
 
-    /* ================= Initialization ================= */
+    /* ================= UC10: Rollback ================= */
+    static Stack<String> releasedRoomsStack = new Stack<>();
+
+    static int counter = 1;
+
     static {
         inventory.put("Single Room", 5);
         inventory.put("Double Room", 3);
         inventory.put("Suite Room", 2);
-
-        allocatedRooms.put("Single Room", new HashSet<>());
-        allocatedRooms.put("Double Room", new HashSet<>());
-        allocatedRooms.put("Suite Room", new HashSet<>());
     }
 
     /* ================= Validation ================= */
@@ -76,85 +77,149 @@ public class BookMyStayApp {
         }
     }
 
-    /* ================= UC6 + UC9 Booking ================= */
+    /* ================= Generate Room ID ================= */
     static String generateRoomId(String type) {
-        return type.substring(0, 2).toUpperCase() + "-" + (usedRoomIds.size() + 1);
+        return type.substring(0, 2).toUpperCase() + "-" + (counter++);
     }
 
-    static void bookRoom(String type, List<String> services) {
-        try {
-            Validator.validateRoomType(type);
-            Validator.validateAvailability(type);
+    /* ================= UC6 + UC7 + UC8 Booking ================= */
+    static String bookRoom(String type, List<String> services) throws InvalidBookingException {
 
-            // Generate unique room ID
-            String roomId;
-            do {
-                roomId = generateRoomId(type);
-            } while (usedRoomIds.contains(roomId));
+        Validator.validateRoomType(type);
+        Validator.validateAvailability(type);
 
-            usedRoomIds.add(roomId);
+        String roomId;
 
-            // Allocate room
-            allocatedRooms.get(type).add(roomId);
-            inventory.put(type, inventory.get(type) - 1);
+        do {
+            roomId = generateRoomId(type);
+        } while (allocatedRoomIds.contains(roomId));
 
-            // UC7: Add-on services
-            addonServices.put(roomId, services);
+        allocatedRoomIds.add(roomId);
 
-            // UC8: Booking history
-            bookingHistory.add(roomId + " | " + type + " | Services: " + services);
+        inventory.put(type, inventory.get(type) - 1);
+        roomToType.put(roomId, type);
 
-            System.out.println("Booking Confirmed:");
-            System.out.println("Room ID: " + roomId);
-            System.out.println("Type: " + type);
-            System.out.println("Services: " + services);
-            System.out.println("----------------------------------");
+        addonServices.put(roomId, services);
 
-        } catch (InvalidBookingException e) {
-            System.out.println("Booking Failed: " + e.getMessage());
-            System.out.println("----------------------------------");
+        bookingHistory.add("BOOKED: " + roomId + " | " + type + " | Services: " + services);
+
+        System.out.println("Booking confirmed: " + roomId);
+
+        return roomId;
+    }
+
+    /* ================= UC10 Cancellation ================= */
+    static void cancelBooking(String roomId) throws InvalidBookingException {
+
+        if (!roomToType.containsKey(roomId)) {
+            throw new InvalidBookingException("Booking does not exist");
         }
+
+        String type = roomToType.get(roomId);
+
+        if (!allocatedRoomIds.contains(roomId)) {
+            throw new InvalidBookingException("Booking already cancelled");
+        }
+
+        // Remove allocation
+        allocatedRoomIds.remove(roomId);
+
+        // Restore inventory
+        inventory.put(type, inventory.get(type) + 1);
+
+        // Push to rollback stack
+        releasedRoomsStack.push(roomId);
+
+        bookingHistory.add("CANCELLED: " + roomId + " | " + type);
+
+        System.out.println("Booking cancelled: " + roomId);
     }
 
     /* ================= UC8 Reporting ================= */
-    static void showBookingHistory() {
+    static void showHistory() {
         System.out.println("\n--- Booking History ---");
         for (String record : bookingHistory) {
             System.out.println(record);
         }
-        System.out.println("------------------------\n");
+        System.out.println("-----------------------\n");
+    }
+
+    /* ================= Display Inventory ================= */
+    static void showInventory() {
+        System.out.println("\n--- Inventory ---");
+        for (Map.Entry<String, Integer> e : inventory.entrySet()) {
+            System.out.println(e.getKey() + " : " + e.getValue());
+        }
+        System.out.println("-----------------\n");
     }
 
     /* ================= Main ================= */
     public static void main(String[] args) {
 
-        System.out.println("Book My Stay App (UC1-UC9 Combined)\n");
-
         Scanner sc = new Scanner(System.in);
 
+        System.out.println("=================================");
+        System.out.println("   Book My Stay App (UC1–UC10)");
+        System.out.println("=================================\n");
+
         while (true) {
-            System.out.print("Enter Room Type (or exit): ");
-            String type = sc.nextLine();
+            System.out.println("1. Book Room");
+            System.out.println("2. Cancel Booking");
+            System.out.println("3. View History");
+            System.out.println("4. View Inventory");
+            System.out.println("5. Exit");
 
-            if (type.equalsIgnoreCase("exit")) break;
+            System.out.print("Choose: ");
+            int choice = Integer.parseInt(sc.nextLine());
 
-            System.out.print("Enter Add-on Services (comma separated): ");
-            String input = sc.nextLine();
+            try {
 
-            List<String> services = new ArrayList<>();
-            if (!input.isEmpty()) {
-                services = Arrays.asList(input.split(","));
+                switch (choice) {
+
+                    case 1:
+                        System.out.print("Enter Room Type: ");
+                        String type = sc.nextLine();
+
+                        System.out.print("Enter Add-ons (comma separated): ");
+                        String input = sc.nextLine();
+
+                        List<String> services = new ArrayList<>();
+                        if (!input.isEmpty()) {
+                            services = Arrays.asList(input.split(","));
+                        }
+
+                        bookRoom(type, services);
+                        break;
+
+                    case 2:
+                        System.out.print("Enter Room ID to cancel: ");
+                        String id = sc.nextLine();
+                        cancelBooking(id);
+                        break;
+
+                    case 3:
+                        showHistory();
+                        break;
+
+                    case 4:
+                        showInventory();
+                        break;
+
+                    case 5:
+                        System.out.println("Exiting...");
+                        return;
+
+                    default:
+                        System.out.println("Invalid choice");
+                }
+
+            } catch (InvalidBookingException e) {
+                System.out.println("Error: " + e.getMessage());
+            } catch (Exception e) {
+                System.out.println("Unexpected error: " + e.getMessage());
             }
 
-            bookRoom(type, services);
-
-            System.out.print("View booking history? (yes/no): ");
-            if (sc.nextLine().equalsIgnoreCase("yes")) {
-                showBookingHistory();
-            }
+            System.out.println("-----------------------------------");
         }
-
-        sc.close();
-        System.out.println("Application terminated.");
     }
 }
